@@ -1255,7 +1255,7 @@
     "migrations/000170_account_output_share.up.sql": "7975b8a1afc197168d8e86f63c43457ba068d4d24f11dd0bbfd668ab422b70c9",
     "migrations/000171_bootstrap_password.down.sql": "abea31f82f5de050fd9650c5d390c680d19edc8a2e4bd906aaba66439a0cddf2",
     "migrations/000171_bootstrap_password.up.sql": "a8698b2c1083a8e7153817efe91bad5e61fd09dbc03fe2b84fa82b3f2cad904f",
-    "release/VALIDATION.json": "0c9f98338da33e84d285b3c093f12443c8992c61b07798ce7eaf1f86be7e9611",
+    "release/VALIDATION.json": "fdd6c72d85084c3a50a5fd58217003647dbf7f54bbdcf7afb8de37a62c798fab",
     "release/check-source.py": "f8bda5b071e6551e659e91c145c576eb5c82f34fa5ac67a95ea7e996e95fc6a4",
     "web/static/app.css": "4ba8484dde52d40741148beb690a3fc1fa11cc68a62884cc547273d57a1d8bd9",
     "web/static/app.js": "5362d6a175411518a1fd44f68495eb9f2f8e1c78941ca20c8697afab83ad051e",
