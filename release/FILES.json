@@ -3,7 +3,7 @@
   "files": {
     ".github/workflows/checks.yml": "dcf04aa72b317d03cede5ba169d33713d4ad4f3a7d66d0736aab0c137868397f",
     ".gitignore": "fedf9008d1dfc6c9ba62e8c73ae99a4ebfa46649bb27647d58e7d49a03560f01",
-    "README.md": "f6cc0bf3312f39474e407474de36ba81f1bcc85c6e0971b3987021e5cf927850",
+    "README.md": "cf61167d2c41c1973a82d3d96f444a0bd7997cd7ddb1dc025db82293d98b8b62",
     "cmd/admin-acceptance/main.go": "bbea34ef25022b712ddf9c28668b53eb4445f7b645cc61b9bfee6552c58a7196",
     "cmd/admin-bootstrap/main.go": "452faa05cf6d84253fd6012e9ec4c3ef968568cf1b0ac4a93295b88661bd7ad8",
     "cmd/api/main.go": "94cd471a56cc238bce7eefa606aeccdca69f601d6f93eceea98a4774f45c57d7",
@@ -1255,7 +1255,7 @@
     "migrations/000170_account_output_share.up.sql": "7975b8a1afc197168d8e86f63c43457ba068d4d24f11dd0bbfd668ab422b70c9",
     "migrations/000171_bootstrap_password.down.sql": "abea31f82f5de050fd9650c5d390c680d19edc8a2e4bd906aaba66439a0cddf2",
     "migrations/000171_bootstrap_password.up.sql": "a8698b2c1083a8e7153817efe91bad5e61fd09dbc03fe2b84fa82b3f2cad904f",
-    "release/VALIDATION.json": "fdd6c72d85084c3a50a5fd58217003647dbf7f54bbdcf7afb8de37a62c798fab",
+    "release/VALIDATION.json": "396f3716364332e6404e79744ae7aed0eacf667af3ea0f2be0c3e0a4da398c9e",
     "release/check-source.py": "f8bda5b071e6551e659e91c145c576eb5c82f34fa5ac67a95ea7e996e95fc6a4",
     "web/static/app.css": "4ba8484dde52d40741148beb690a3fc1fa11cc68a62884cc547273d57a1d8bd9",
     "web/static/app.js": "5362d6a175411518a1fd44f68495eb9f2f8e1c78941ca20c8697afab83ad051e",
