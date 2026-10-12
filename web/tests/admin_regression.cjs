@@ -1,0 +1,146 @@
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process'),assert=require('node:assert/strict');
+(async()=>{
+ const base=process.env.DOB_UI_BASE,token=process.env.DOB_UI_TOKEN;
+ if(!base?.startsWith('http://127.0.0.1:')||!token)throw Error('local ephemeral session required');
+ const root=process.env.DOB_UI_ARTIFACT_DIR||os.tmpdir(),profile=fs.mkdtempSync(path.join(root,'ui-profile-'));
+ const log=fs.openSync(path.join(root,'browser.log'),'w');
+ const chrome=spawn('/snap/bin/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profile,'about:blank'],{stdio:['ignore',log,log],env:{...process.env,TMPDIR:root}});
+ let ws;try{
+  const until=Date.now()+20000;let port;
+  while(Date.now()<until){try{port=Number(fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0]);break}catch{};await new Promise(r=>setTimeout(r,200))}
+  if(!port)throw Error('browser did not start');
+  const version=await(await fetch('http://127.0.0.1:'+port+'/json/version')).json();
+  ws=new WebSocket(version.webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j});
+  let seq=0;const pending=new Map();
+  ws.onmessage=({data})=>{const m=JSON.parse(data);if(m.id){const h=pending.get(m.id);if(h){pending.delete(m.id);m.error?h[1](Error(m.error.message)):h[0](m.result)}}};
+  const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,[resolve,reject]);ws.send(JSON.stringify({id,method,params,sessionId}))});
+  const {targetId}=await send('Target.createTarget',{url:'about:blank'});
+  const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
+  const call=(m,p)=>send(m,p,sessionId);
+  await call('Page.enable');await call('Runtime.enable');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  await call('Page.addScriptToEvaluateOnNewDocument',{source:'if(location.origin==='+JSON.stringify(base)+'){localStorage.setItem("token",'+JSON.stringify(token)+')}'});
+  const evaluate=async expression=>{const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error('page evaluation failed');return r.result.value};
+  await call('Page.navigate',{url:base+'/admin/#accounts'});
+  async function waitFor(expression){const end=Date.now()+12000;while(Date.now()<end){if(await evaluate(expression))return;await new Promise(r=>setTimeout(r,150))}throw Error('UI assertion timeout')}
+  await waitFor('document.querySelectorAll(".accountCard").length>0');
+  const fixture=process.env.DOB_UI_FIXTURE_ACCOUNT;
+  if(fixture){
+   assert.match(fixture,/^[0-9a-f-]{36}$/);
+   assert.equal(await evaluate('cache.accounts.some(x=>x.id==='+JSON.stringify(fixture)+'&&x.name==='+JSON.stringify('acceptance-'+fixture)+')'),true);
+   await evaluate('(()=>{const original=window.confirm;window.confirm=message=>{window.lastDeleteConfirmation=message;return true};document.querySelector('+JSON.stringify('[data-action="delete-account"][data-id="'+fixture+'"]')+').click();window.confirm=original})()');
+   await waitFor('!cache.accounts.some(x=>x.id==='+JSON.stringify(fixture)+')||cache.accounts.some(x=>x.id==='+JSON.stringify(fixture)+'&&x.deletion)');
+   if(process.env.DOB_UI_EXPECT_LOCAL_PURGE==='true'){
+    await waitFor('!cache.accounts.some(x=>x.id==='+JSON.stringify(fixture)+')');
+    assert.equal(await evaluate('lastDeleteConfirmation.includes("does NOT confirm deletion of cloud resources")'),true);
+    console.log('UI_EXPLICIT_LOCAL_PURGE_COMPLETED PASS');
+   }
+   console.log('UI_ACCOUNT_DELETE_BUTTON_REQUESTED PASS');
+   return;
+  }
+  const cards=await evaluate('document.querySelectorAll(".accountCard").length');
+  assert.equal(await evaluate('document.querySelectorAll(".accountCard .billingCompact").length'),cards);
+  assert.equal(await evaluate('[...document.querySelectorAll(".billingCompact")].every(x=>x.closest(".accountCard")&&!x.open)'),true);
+  const snap=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(root,'accounts-mobile.png'),Buffer.from(snap.data,'base64'));
+  console.log('UI_ACCOUNT_BILLING_NESTED_COMPACT PASS accounts='+cards);
+  await evaluate('document.querySelector(".billingCompact").open=true;document.querySelectorAll(".accountCard")[1].scrollIntoView()');
+  const before=await evaluate('window.scrollY');
+  await evaluate('refreshAccountsInPlace()');await waitFor('!accountsRefreshBusy');
+  assert.equal(await evaluate('document.querySelector(".billingCompact").open'),true);
+  assert.ok(Math.abs(await evaluate('window.scrollY')-before)<4);
+  console.log('UI_ACCOUNT_REFRESH_PRESERVES_SCROLL_AND_BILLING PASS');
+
+  await evaluate('load("residential")');await waitFor('Array.isArray(cache.residential)');
+  const resIDs=await evaluate('(cache.residential||[]).map(x=>x.id)');
+  await evaluate('load("proxies")');await waitFor('Array.isArray(cache.proxies)');
+  const proxyIDs=await evaluate('(cache.proxies||[]).map(x=>x.id)');
+  assert.equal(resIDs.some(x=>proxyIDs.includes(x)),false);
+  console.log('UI_RESIDENTIAL_PROXY_ISOLATION PASS');
+  await evaluate('load("configs")');await waitFor('document.querySelector("[data-action=resume-capacity]")!==null');
+  const activeCleanup=await evaluate('cache.cleanup&&!["done","cancelled"].includes(cache.cleanup.status)');
+  if(activeCleanup)assert.equal(await evaluate('document.querySelectorAll(".cleanupStatus [data-action=cancel-cleanup]").length'),1);
+  if(activeCleanup){
+   assert.equal(await evaluate('document.querySelector("[data-action=resume-capacity]").disabled'),true);
+   assert.equal(await evaluate('document.querySelectorAll("[data-action=restore-capacity]").length'),1);
+  }
+  await evaluate('toast("Visible acceptance message","error")');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#toast")).position'), 'fixed');
+  const restoreRevision=process.env.DOB_UI_RESTORE_REVISION,restoreCleanup=process.env.DOB_UI_RESTORE_CLEANUP;
+  if(restoreRevision){
+   assert.equal(await evaluate('cache.configs[0].revision'),Number(restoreRevision));
+   assert.equal(await evaluate('cache.cleanup.id'),restoreCleanup);
+   assert.equal(await evaluate('cache.cleanup.status'),'paused');
+   assert.equal(await evaluate('cache.configs[0].target_users_per_inbound'),2);
+   await evaluate('(()=>{const original=window.confirm;window.confirm=()=>true;document.querySelector("[data-action=restore-capacity]").click();window.confirm=original})()');
+   await waitFor('cache.configs[0].master_enabled&&cache.cleanup.status==="cancelled"');
+   console.log('UI_EXPLICIT_RESTORE_SAVED_POLICY PASS');
+  }
+
+
+  console.log('UI_CLEANUP_STATUS_SURVIVES_NAVIGATION PASS');
+  const policyRevision=await evaluate('cache.configs[0].revision');
+  await evaluate('openConfigForm(cache.configs[0])');
+  await waitFor('document.querySelector("#dnsCatalog")?.textContent.includes("3 saved")');
+  assert.equal(await evaluate('document.querySelector("[name=users_per_second]").tagName'),'SELECT');
+  assert.equal(await evaluate('document.querySelector("[name=users_per_second]").value'),String(await evaluate('cache.configs[0].users_per_second')));
+  assert.deepEqual(await evaluate('[...document.querySelector("[name=users_per_second]").options].map(x=>Number(x.value))'),Array.from({length:100},(_,i)=>i+1));
+  assert.equal(await evaluate('[...document.querySelector("[name=users_per_second]").options].some(x=>x.value==="10000")'),false);
+  await evaluate('document.querySelector("[name=users_per_second]").value="600"');
+  await evaluate('document.querySelector("#modalForm").requestSubmit()');
+  assert.match(await evaluate('document.querySelector("#modalError").textContent'),/1 to 100/);
+  assert.equal(await evaluate('document.querySelector("[name=generate_direct],[name=generate_residential]")===null'),true);
+  assert.equal(await evaluate('document.querySelectorAll(".configProfile").length'),2);
+  assert.equal(await evaluate('(()=>{const h=document.querySelector(".modalHead").getBoundingClientRect(),b=document.querySelector("#modalSubmit").getBoundingClientRect();return h.top>=0&&b.bottom<=innerHeight})()'),true);
+  await evaluate('window.originalProfileAPI=api;window.profileSaves=[];api=async(p,o)=>{if(p==="/api/v1/configs"&&o?.method==="PUT"){window.profileSaves.push(JSON.parse(o.body));return {}}return window.originalProfileAPI(p,o)}');
+  for(const cls of ['DIRECT','RESIDENTIAL']){
+   await evaluate('openConfigForm(cache.configs.find(x=>x.route_class==='+JSON.stringify(cls)+'))');
+   await evaluate('document.querySelector("[name=users_per_second]").value="1";document.querySelector("[name=target_users_per_inbound]").value="1";document.querySelector("[name=enabled]").checked=true;document.querySelector("#modalForm").requestSubmit()');
+   await waitFor('!document.querySelector("#modal").open');
+  }
+  await evaluate('openConfigForm(cache.configs.find(x=>x.route_class==="RESIDENTIAL"))');
+  await evaluate('document.querySelector("[name=creation_interval_minutes]").value="6";document.querySelector("[name=lifetime_expr]").value="6";document.querySelector("#modalForm").requestSubmit()');
+  await waitFor('!document.querySelector("#modal").open');
+  assert.equal(await evaluate('window.profileSaves[2].creation_interval_seconds'),360);
+  assert.equal(await evaluate('window.profileSaves[2].user_lifetime_expression'),'6');
+  console.log('UI_SIX_MINUTE_CREATION_INTERVAL PASS');
+  assert.deepEqual(await evaluate('window.profileSaves.slice(0,2).map(x=>[x.route_class,x.target_users_per_inbound,x.users_per_second])'),[['DIRECT',1,1],['RESIDENTIAL',1,1]]);
+  await evaluate('api=window.originalProfileAPI');
+  await evaluate('openConfigForm()');
+  assert.equal(await evaluate('document.querySelectorAll("[data-profile-choice]").length'),2);
+  await evaluate('document.querySelector("[data-profile-choice=RESIDENTIAL]").click()');
+  assert.match(await evaluate('document.querySelector("#modalTitle").textContent'),/Residential/);
+  await evaluate('document.querySelector("[name=users_per_second]").value="10000";document.querySelector("#modalForm").requestSubmit()');
+  assert.match(await evaluate('document.querySelector("#modalError").textContent'),/does not limit user connections/);
+  await evaluate('openConfigForm(cache.configs.find(x=>x.route_class==="RESIDENTIAL"))');
+  await waitFor('document.querySelector("#dnsCatalog")?.textContent.includes("3 saved")');
+  assert.equal(await evaluate('document.querySelector("#modalFields a[href*=browserleaks]")?.href'),"https://browserleaks.com/ip");
+  assert.equal(await evaluate('document.querySelector("#modalFields").textContent.includes("Only TCP traffic matching Ads categories")'),true);
+  assert.equal(await evaluate('document.querySelector("#modalError").textContent'),'');
+  await evaluate('document.querySelector("[name=users_per_second]").scrollIntoView({block:"center"})');
+  console.log('UI_ADS_TCP_ONLY_DESCRIPTION_AND_RATE_SELECTOR PASS');
+  console.log('UI_INDEPENDENT_PROFILE_FORMS_AND_MOBILE_LAYOUT PASS');
+  const invalid=await fetch(base+'/api/v1/configs',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({users_per_second:600,ports:[443],target_users_per_inbound:1,sni_selection_mode:'scored'})});
+  assert.equal(invalid.status,400);const detail=await invalid.json();assert.equal(detail.field,'users_per_second');assert.match(detail.detail,/1 to 100/);
+  const policy=await(await fetch(base+'/api/v1/configs',{headers:{Authorization:'Bearer '+token}})).json();
+  assert.equal(policy[0].revision,policyRevision,'invalid edits changed policy');
+  const errorSnap=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(root,'config-validation-mobile.png'),Buffer.from(errorSnap.data,'base64'));
+  await evaluate('document.querySelector("#modal").close()');
+  console.log('UI_CONFIG_VALIDATION_AND_DNS_CATALOG PASS unchanged_revision='+policyRevision);
+
+  await evaluate('load("dashboard")');await waitFor('document.querySelectorAll(".stat").length>=10');
+  assert.equal(await evaluate('document.querySelector("#content").textContent.includes("Panels needing attention")'),true);
+  console.log('UI_DASHBOARD PASS');
+  if(process.env.DOB_UI_OUTPUT_URL){
+   await call('Page.navigate',{url:process.env.DOB_UI_OUTPUT_URL});
+   await waitFor('document.querySelector("#configs")?.textContent.startsWith("vless://")');
+   assert.equal(await evaluate('document.querySelector("#copy,#status,h1,button")===null'),true);
+   assert.equal(await evaluate('document.body.innerText.trim()===document.querySelector("#configs").textContent.trim()'),true);
+   assert.equal(await evaluate('document.querySelector("#configs").textContent.trim().split(/\\r?\\n/).every(x=>/^vless:\\/\\/[^\\s]+$/.test(x))'),true);
+   console.log('UI_LIVE_OUTPUT_VIEW PASS');
+  }
+
+ }finally{
+  if(ws)ws.close();chrome.kill('SIGTERM');fs.closeSync(log);
+  await new Promise(r=>setTimeout(r,500));fs.rmSync(profile,{recursive:true,force:true});
+ }
+})().catch(e=>{console.error(e.message);process.exitCode=1});

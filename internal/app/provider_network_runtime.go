@@ -1,0 +1,168 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/network"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/proxycontrol"
+)
+
+type providerNetworkRuntime struct {
+	Client         *http.Client
+	Gateway        *network.Gateway
+	Gate           network.AccountGate
+	Generation     int64
+	TransportEpoch int64
+	closeIdle      func()
+}
+
+func classifyProviderProxyObservation(obs network.TransportObservation, alreadyHealthy bool) (network.HealthResult, bool) {
+	if obs.Err == nil && !obs.ProxyAuthRequired {
+		if alreadyHealthy {
+			return network.HealthResult{}, false
+		}
+		return network.HealthResult{Status: network.StatusHealthy, Latency: obs.Latency, CheckedAt: obs.StartedAt.Add(obs.Latency)}, true
+	}
+	if obs.ProxyAuthRequired || errors.Is(obs.Err, network.ErrProxyAuth) {
+		return network.HealthResult{Status: network.StatusDown, Latency: obs.Latency, CheckedAt: obs.StartedAt.Add(obs.Latency), Error: "proxy authentication required"}, true
+	}
+	return network.HealthResult{}, false
+}
+
+func (r providerNetworkRuntime) CloseIdleConnections() {
+	if r.closeIdle != nil {
+		r.closeIdle()
+	}
+}
+
+type providerObservationStore interface {
+	ApplyObservationForGeneration(context.Context, string, string, string, int64, network.HealthResult, proxycontrol.Policy) (proxycontrol.State, bool, error)
+}
+
+func persistProviderRuntimeObservation(
+	ctx context.Context,
+	store providerObservationStore,
+	accountID, proxyID, provider string,
+	generation int64,
+	result network.HealthResult,
+	policy proxycontrol.Policy,
+	healthy *bool,
+) error {
+	next, applied, err := store.ApplyObservationForGeneration(
+		ctx, accountID, proxyID, provider, generation, result, policy,
+	)
+	if err != nil {
+		return err
+	}
+	if applied {
+		*healthy = next.HealthState == network.StatusHealthy
+	}
+	return nil
+}
+
+// buildProviderNetworkRuntime is the single provider-agnostic network boundary.
+// Every provider driver receives its HTTP client through this function.
+// Proxy-required accounts fail closed; direct accounts receive an isolated
+// per-account direct client.
+func (c Container) buildProviderNetworkRuntime(ctx context.Context, cfg AccountConfig) (providerNetworkRuntime, error) {
+	if cfg.Network.Mode == network.RouteProxyRequired {
+		if cfg.Proxy == nil {
+			return providerNetworkRuntime{}, ErrNetworkNotReady
+		}
+		generation := int64(1)
+		transportEpoch := int64(0)
+		if c.DB != nil {
+			state, allowed, err := (proxycontrol.SQLStore{DB: c.DB}).Acquire(
+				ctx, cfg.ID, cfg.Proxy.ID, cfg.Provider, time.Now().UTC(), 30*time.Second,
+			)
+			if err != nil {
+				return providerNetworkRuntime{}, err
+			}
+			if !allowed {
+				return providerNetworkRuntime{}, network.ErrProxyCircuitOpen
+			}
+			generation = state.Generation
+			transportEpoch, err = (proxycontrol.TransportEpochStore{DB: c.DB}).Ensure(ctx, cfg.ID, cfg.Provider, &cfg.Proxy.ID)
+			if err != nil {
+				return providerNetworkRuntime{}, err
+			}
+		}
+		password := []byte(nil)
+		var err error
+		if cfg.ProxySecretRef != "" {
+			password, err = c.Secrets.GetProxy(ctx, cfg.Proxy.ID, cfg.ProxySecretRef)
+			if err != nil {
+				return providerNetworkRuntime{}, err
+			}
+			defer wipe(password)
+		}
+		economy, err := c.Economy.Enabled(ctx, cfg.ID)
+		if err != nil {
+			return providerNetworkRuntime{}, err
+		}
+		stickySession, exitIP := proxyIdentitySignature(ctx, c.DB, cfg.ID)
+		creds := network.ProxyCredentials{Username: cfg.ProxyUsername, Password: string(password)}
+		var gateway *network.Gateway
+		if economy && c.ProxyTransports != nil {
+			gateway, err = c.ProxyTransports.Open(cfg.ID, *cfg.Proxy, creds, fmt.Sprintf("%s/%d/%d/%s/%s", cfg.Provider, generation, transportEpoch, stickySession, exitIP))
+		} else {
+			gateway, err = network.NewAccountProxyGateway(cfg.ID, *cfg.Proxy, creds, "provider_api")
+		}
+		if err != nil {
+			return providerNetworkRuntime{}, err
+		}
+		gate := network.AccountGate{
+			Profile: cfg.Network,
+			Proxy:   cfg.Proxy,
+			Health:  network.HealthState{Status: cfg.Proxy.Status},
+		}
+		if c.DB != nil {
+			store := proxycontrol.SQLStore{DB: c.DB}
+			policy := proxycontrol.DefaultPolicy()
+			healthy := cfg.Proxy.Status == network.StatusHealthy
+			var healthMu sync.Mutex
+			observed := network.ObserveTransport(gateway.Client.Transport, func(obs network.TransportObservation) {
+				healthMu.Lock()
+				defer healthMu.Unlock()
+				result, apply := classifyProviderProxyObservation(obs, healthy)
+				if !apply {
+					return
+				}
+				reportCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+				defer cancel()
+				_ = persistProviderRuntimeObservation(
+					reportCtx,
+					store,
+					cfg.ID,
+					cfg.Proxy.ID,
+					cfg.Provider,
+					generation,
+					result,
+					policy,
+					&healthy,
+				)
+			})
+			gateway.Client.Transport = accountNetworkGuardTransport{
+				Base: observed, Container: c, AccountID: cfg.ID, Provider: cfg.Provider,
+				ProxyID: cfg.Proxy.ID, Generation: generation, TransportEpoch: transportEpoch,
+				StickySession: stickySession, ExitIP: exitIP,
+			}
+		}
+		return providerNetworkRuntime{Client: gateway.Client, Gateway: gateway, Gate: gate, Generation: generation, TransportEpoch: transportEpoch, closeIdle: gateway.CloseIdleConnections}, nil
+	}
+
+	bundle, err := network.NewIsolatedDirectClient(cfg.ID)
+	if err != nil {
+		return providerNetworkRuntime{}, err
+	}
+	return providerNetworkRuntime{
+		Client:    bundle.Client,
+		Gate:      network.AccountGate{Profile: cfg.Network},
+		closeIdle: bundle.CloseIdleConnections,
+	}, nil
+}

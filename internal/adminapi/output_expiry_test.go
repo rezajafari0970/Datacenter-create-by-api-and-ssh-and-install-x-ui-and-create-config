@@ -1,0 +1,46 @@
+package adminapi
+
+import (
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestOutputVisibleUntilTenSecondsBeforeExpiry(t *testing.T) {
+	expiry := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	got := outputVisibleUntil(float64(expiry.UnixMilli()))
+	want := expiry.Add(-10 * time.Second)
+	if got == nil || !got.Equal(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestOutputVisibleUntilNoExpiry(t *testing.T) {
+	if got := outputVisibleUntil(float64(0)); got != nil {
+		t.Fatalf("got %v want nil", got)
+	}
+	if got := outputVisibleUntil(nil); got != nil {
+		t.Fatalf("got %v want nil", got)
+	}
+}
+
+func TestOutputDropletStatePredicateExcludesRetiring(t *testing.T) {
+	if !strings.Contains(outputDropletStatePredicate, "'READY'") || !strings.Contains(outputDropletStatePredicate, "'EXPIRING'") {
+		t.Fatal("output must serve READY and EXPIRING droplets")
+	}
+	if strings.Contains(outputDropletStatePredicate, "'RETIRING'") {
+		t.Fatal("output must stop serving configs as soon as droplet enters RETIRING")
+	}
+}
+
+func TestOutputSnapshotRefreshesLastSeenEveryObservation(t *testing.T) {
+	src, err := os.ReadFile("output_snapshot.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, "last_seen_at < now()-interval '10 seconds'") {
+		t.Fatal("successful observations must not leave last_seen_at artificially stale")
+	}
+}

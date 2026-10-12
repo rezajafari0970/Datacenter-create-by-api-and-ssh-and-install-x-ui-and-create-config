@@ -1,0 +1,328 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/capacity"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/providers"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/provisioning"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/workflow"
+	"math/rand"
+	"strings"
+
+	"github.com/lib/pq"
+	"time"
+)
+
+var ErrProfileDisabled = errors.New("deployment profile disabled")
+var ErrDatabaseTemplateNotConfigured = errors.New("database template not configured")
+var ErrDatabaseTemplateUnavailable = errors.New("database template unavailable")
+
+func (c Container) StartDeployment(ctx context.Context, accountID, profileID string) (workflow.Deployment, error) {
+	return c.startDeployment(ctx, accountID, profileID, false, "")
+}
+
+func (c Container) startDeployment(ctx context.Context, accountID, profileID string, consumeBackfill bool, replacementDropletID string) (workflow.Deployment, error) {
+	return c.prepareDeployment(ctx, accountID, profileID, consumeBackfill, replacementDropletID, false)
+}
+
+func (c Container) prepareDeployment(ctx context.Context, accountID, profileID string, consumeBackfill bool, replacementDropletID string, enqueue bool) (workflow.Deployment, error) {
+	if err := c.MaintainStickyIdentity(ctx, accountID); err != nil {
+		return workflow.Deployment{}, err
+	}
+	profiles := workflow.ProfileStore{DB: c.DB}
+	profile, err := profiles.Get(ctx, profileID)
+	if err != nil {
+		return workflow.Deployment{}, err
+	}
+	if profile.AccountID != accountID || !profile.Enabled {
+		return workflow.Deployment{}, ErrProfileDisabled
+	}
+	if profile.Config.DatabaseTemplateID == "" {
+		return workflow.Deployment{}, ErrDatabaseTemplateNotConfigured
+	}
+	var templateActive bool
+	var templatePath string
+	if err := c.DB.QueryRowContext(ctx, `SELECT active,storage_path FROM xui_database_templates WHERE id=$1`, profile.Config.DatabaseTemplateID).Scan(&templateActive, &templatePath); err != nil || !templateActive || templatePath == "" || templatePath == "pending" {
+		return workflow.Deployment{}, ErrDatabaseTemplateUnavailable
+	}
+	// Serialize capacity admission per account. The capacity check and PLANNED
+	// deployment reservation share one transaction, so the next caller observes
+	// this reservation before it can consume the same provider slot.
+	tx, err := c.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return workflow.Deployment{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "deployment-admission:"+accountID); err != nil {
+		return workflow.Deployment{}, err
+	}
+	profile, err = loadDeploymentProfileTx(ctx, tx, profileID)
+	if err != nil {
+		return workflow.Deployment{}, err
+	}
+	if profile.AccountID != accountID || !profile.Enabled {
+		return workflow.Deployment{}, ErrProfileDisabled
+	}
+	if profile.Config.DatabaseTemplateID == "" {
+		return workflow.Deployment{}, ErrDatabaseTemplateNotConfigured
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT active,storage_path FROM xui_database_templates WHERE id=$1`, profile.Config.DatabaseTemplateID).Scan(&templateActive, &templatePath); err != nil || !templateActive || templatePath == "" || templatePath == "pending" {
+		return workflow.Deployment{}, ErrDatabaseTemplateUnavailable
+	}
+	var enabled bool
+	var maxConcurrent, activeBuilds int
+	var runtimeStatus, providerState, providerError string
+	if err = tx.QueryRowContext(ctx, `SELECT enabled,runtime_status,provider_state,COALESCE(provider_error_state,''),auto_max_concurrent FROM accounts WHERE id=$1`, accountID).Scan(&enabled, &runtimeStatus, &providerState, &providerError, &maxConcurrent); err != nil || !enabled || runtimeStatus != "READY" || providerState != ProviderStateActive || providerError != "" {
+		return workflow.Deployment{}, ErrCapacityUnavailable
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM deployments d WHERE d.account_id=$1 AND d.state NOT IN ('READY','FAILED','INSTALL_FAILED','INSTALL_ROLLED_BACK','PANEL_COMPLETE') AND (d.droplet_id IS NULL OR EXISTS(SELECT 1 FROM droplets v WHERE v.id=d.droplet_id AND v.state<>'DELETED'))`, accountID).Scan(&activeBuilds); err != nil {
+		return workflow.Deployment{}, err
+	}
+	if maxConcurrent > 0 && activeBuilds >= maxConcurrent {
+		return workflow.Deployment{}, ErrCapacityUnavailable
+	}
+	var desired, managed, preCreate int
+	if err = tx.QueryRowContext(ctx, `SELECT
+		(SELECT desired_server_count FROM accounts WHERE id=$1),
+		(SELECT count(*) FROM droplets WHERE account_id=$1 AND state<>'DELETED'),
+		(SELECT count(*) FROM deployments WHERE account_id=$1 AND state NOT IN ('READY','FAILED','INSTALL_FAILED','INSTALL_ROLLED_BACK','PANEL_COMPLETE') AND droplet_id IS NULL)`, accountID).Scan(&desired, &managed, &preCreate); err != nil {
+		return workflow.Deployment{}, err
+	}
+	cap, capErr := capacity.Read(ctx, tx, accountID, 2*time.Minute)
+	if capErr != nil {
+		return workflow.Deployment{}, ErrCapacitySnapshotStale
+	}
+	effectiveOccupancy := desiredEffectiveOccupancy(managed, preCreate, cap.InUse)
+	if !desiredOccupancyAllowsCreate(desired, effectiveOccupancy) {
+		return workflow.Deployment{}, ErrCapacityUnavailable
+	}
+	if (cap.LimitKnown && cap.Limit < 1) || cap.Available() < 1 {
+		var provider string
+		_ = tx.QueryRowContext(ctx, `SELECT provider FROM accounts WHERE id=$1`, accountID).Scan(&provider)
+		if provider != "vultr" || cap.Pending > 0 {
+			return workflow.Deployment{}, ErrCapacityUnavailable
+		}
+		var claimed bool
+		err = tx.QueryRowContext(ctx, `UPDATE provider_capacity_observations SET probe_in_flight=true,source='vultr_api_probe',updated_at=now() WHERE account_id=$1 AND probe_in_flight=false AND ((source='vultr_api_saturation' AND probe_after IS NOT NULL AND probe_after<=now()) OR source='vultr_api_probe_success') RETURNING true`, accountID).Scan(&claimed)
+		if err != nil || !claimed {
+			return workflow.Deployment{}, ErrCapacityUnavailable
+		}
+	}
+	var regionsRaw, sizesRaw []byte
+	var imagesRaw []byte
+	var lifetimeMin, lifetimeMax int
+	var fallbackAnyRegion bool
+	if err = tx.QueryRowContext(ctx, `SELECT preferred_regions,preferred_sizes,preferred_images,COALESCE(server_lifetime_min_seconds,server_lifetime_seconds),COALESCE(server_lifetime_max_seconds,server_lifetime_seconds),fallback_any_region FROM accounts WHERE id=$1`, accountID).Scan(&regionsRaw, &sizesRaw, &imagesRaw, &lifetimeMin, &lifetimeMax, &fallbackAnyRegion); err != nil {
+		return workflow.Deployment{}, err
+	}
+	store := workflow.SQLStore{DB: tx}
+	d, _, err := store.Reserve(ctx, workflow.Request{AccountID: accountID, ProfileID: profileID, ClientCount: profile.Config.ClientCount, InboundID: profile.Config.InboundID, EmailPrefix: profile.Config.EmailPrefix})
+	if err != nil {
+		return d, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE deployments SET build_rules_revision=COALESCE((SELECT revision FROM account_rule_application WHERE account_id=$2),0) WHERE id=$1`, d.ID, accountID); err != nil {
+		return d, err
+	}
+	if replacementDropletID != "" {
+		res, qerr := tx.ExecContext(ctx, `UPDATE droplets
+			SET replacement_deployment_id=$3,updated_at=now()
+			WHERE id=$1 AND account_id=$2 AND replacement_deployment_id IS NULL
+			  AND state IN ('READY','EXPIRING','RETIRING')`, replacementDropletID, accountID, d.ID)
+		if qerr != nil {
+			return d, qerr
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			return d, ErrCapacityUnavailable
+		}
+	}
+	if consumeBackfill {
+		res, qerr := tx.ExecContext(ctx, `UPDATE droplets
+			SET replacement_deployment_id=$2,backfill_required=false,updated_at=now()
+			WHERE id=(
+				SELECT id FROM droplets
+				WHERE account_id=$1 AND state='DELETED' AND backfill_required=true AND replacement_deployment_id IS NULL
+				ORDER BY updated_at,id
+				FOR UPDATE SKIP LOCKED
+				LIMIT 1
+			)`, accountID, d.ID)
+		if qerr != nil {
+			return d, qerr
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			return d, ErrCapacityUnavailable
+		}
+	}
+	effective := profile.Config
+	var regions, sizes, images []string
+	_ = json.Unmarshal(regionsRaw, &regions)
+	_ = json.Unmarshal(sizesRaw, &sizes)
+	_ = json.Unmarshal(imagesRaw, &images)
+	rand.Shuffle(len(regions), func(i, j int) { regions[i], regions[j] = regions[j], regions[i] })
+	if len(regions) > 0 {
+		effective.Region = regions[0]
+		effective.Regions = regions
+	}
+	if len(sizes) > 0 {
+		effective.Size = sizes[rand.Intn(len(sizes))]
+	}
+	var catalog providers.Catalog
+	var catalogRaw []byte
+	if err := c.DB.QueryRowContext(ctx, `SELECT canonical FROM provider_snapshots WHERE account_id=$1 AND canonical IS NOT NULL ORDER BY created_at DESC LIMIT 1`, accountID).Scan(&catalogRaw); err == nil {
+		var obs providers.Observation
+		if json.Unmarshal(catalogRaw, &obs) == nil {
+			catalog = obs.Catalog
+		}
+	}
+	if fallbackAnyRegion {
+		allowed := map[string]bool{}
+		for _, plan := range catalog.Plans {
+			if plan.ID == effective.Size && plan.Available {
+				for _, rg := range plan.AvailableRegions {
+					allowed[rg] = true
+				}
+				break
+			}
+		}
+		compatible := make([]string, 0, len(effective.Regions))
+		seenPreferred := map[string]bool{}
+		for _, rg := range effective.Regions {
+			if allowed[rg] {
+				compatible = append(compatible, rg)
+				seenPreferred[rg] = true
+			}
+		}
+		seenFallback := map[string]bool{}
+		for _, rg := range catalog.Regions {
+			if rg.Available && allowed[rg.ID] && !seenPreferred[rg.ID] && !seenFallback[rg.ID] {
+				compatible = append(compatible, rg.ID)
+				seenFallback[rg.ID] = true
+			}
+		}
+		effective.Regions = compatible
+		if len(compatible) > 0 {
+			effective.Region = compatible[0]
+		}
+	}
+	if len(images) > 0 {
+		available := map[string]bool{}
+		for _, im := range catalog.Images {
+			if im.Available && im.Family == "ubuntu" && (im.Version == "22.04" || im.Version == "24.04" || im.Version == "26.04") {
+				available[im.ID] = true
+			}
+		}
+		filtered := make([]string, 0, len(images))
+		for _, im := range images {
+			if available[im] {
+				filtered = append(filtered, im)
+			}
+		}
+		images = filtered
+		quarantined, qerr := bootImageQuarantine(ctx, tx, accountID, effective.Region, effective.Size)
+		if qerr != nil {
+			return d, qerr
+		}
+		good := make(map[string]bool, len(images))
+		bad := make(map[string]bool, len(images))
+		rows, qerr := c.DB.QueryContext(ctx, "SELECT profile_snapshot->>'image',state,COALESCE(last_error,'') FROM deployments WHERE account_id=$1 AND profile_snapshot->>'image'=ANY($2) ORDER BY created_at DESC LIMIT 200", accountID, pq.Array(images))
+		if qerr == nil {
+			for rows.Next() {
+				var image, state, lastError string
+				if rows.Scan(&image, &state, &lastError) != nil {
+					continue
+				}
+				if state == "PANEL_COMPLETE" || state == "READY" {
+					good[image] = true
+				}
+				if strings.Contains(strings.ToLower(lastError), "image you selected is no longer available") {
+					bad[image] = true
+				}
+			}
+			rows.Close()
+		}
+		proven := make([]string, 0, len(images))
+		neutral := make([]string, 0, len(images))
+		for _, image := range images {
+			if quarantined[image] {
+				continue
+			}
+			if good[image] {
+				proven = append(proven, image)
+			} else if !bad[image] {
+				neutral = append(neutral, image)
+			}
+		}
+		if len(proven) > 0 {
+			effective.Image = proven[rand.Intn(len(proven))]
+		} else if len(neutral) > 0 {
+			effective.Image = neutral[rand.Intn(len(neutral))]
+		} else {
+			return d, &providers.Error{Class: providers.ErrorImageUnavailable, Operation: "select_image", Message: "all configured available images are unavailable or in a one-hour boot-failure cooldown for this region and plan"}
+		}
+	}
+	if lifetimeMin > 0 {
+		if lifetimeMax < lifetimeMin {
+			lifetimeMax = lifetimeMin
+		}
+		seconds := lifetimeMin
+		if lifetimeMax > lifetimeMin {
+			seconds += rand.Intn(lifetimeMax - lifetimeMin + 1)
+		}
+		effective.Lifetime = time.Duration(seconds) * time.Second
+	}
+	if len(effective.InstallSteps) == 0 {
+		if len(effective.InstallScriptRefs) > 0 {
+			resolved, resolveErr := (provisioning.ScriptRegistry{DB: c.DB}).Resolve(ctx, effective.InstallScriptRefs)
+			if resolveErr != nil {
+				return d, resolveErr
+			}
+			effective.InstallSteps = resolved
+		} else {
+			effective.InstallSteps = append([]provisioning.ScriptStep(nil), defaultProvisionPlan().Scripts...)
+		}
+	}
+	// The immutable selection and its reservation become visible atomically.
+	// A crash before this commit leaves neither an incomplete job nor a slot.
+	if err := (workflow.ProfileStore{DB: tx}).AttachSnapshot(ctx, d.ID, effective); err != nil {
+		return d, err
+	}
+	// Hold the same lease as recovery while preparing the external SSH identity.
+	release, err := (workflow.PostgresRunLease{DB: c.DB}).Acquire(ctx, d.ID)
+	if err != nil {
+		return d, err
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	if err = tx.Commit(); err != nil {
+		return d, err
+	}
+	// Every deployment receives its own SSH key pair before the provider
+	// mutation. Recovery reuses the persisted identity rather than rotating it.
+	snap, err := profiles.SnapshotForDeployment(ctx, d.ID)
+	if err != nil {
+		return d, err
+	}
+	if err := c.ensureDeploymentSSHIdentity(ctx, accountID, d, &snap); err != nil {
+		return d, err
+	}
+	if enqueue {
+		return (workflow.SQLStore{DB: c.DB}).Get(ctx, d.ID, accountID)
+	}
+	cfg, _, err := c.DeploymentConfigFromSnapshot(ctx, d.ID)
+	if err != nil {
+		return d, err
+	}
+	engine, err := c.Workflow(ctx, accountID, cfg)
+	if err != nil {
+		return d, err
+	}
+	release()
+	release = nil
+	return engine.Run(ctx, workflow.Request{DeploymentID: d.ID, AccountID: accountID, ProfileID: profileID, ClientCount: profile.Config.ClientCount, InboundID: profile.Config.InboundID, EmailPrefix: profile.Config.EmailPrefix})
+}

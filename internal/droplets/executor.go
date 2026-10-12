@@ -1,0 +1,165 @@
+package droplets
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/jobs"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/providers"
+)
+
+var ErrMutationBlocked = errors.New("droplet mutation blocked")
+
+type MutationGate interface{ AllowMutation() error }
+
+type Executor struct {
+	Operations      jobs.Store
+	Provider        providers.ComputeDriver
+	Gate            MutationGate
+	EgressCheck     func(context.Context) error
+	PreCreateCheck  func(context.Context) error
+	OnCreateError   func(context.Context, error)
+	OnCreateSuccess func(context.Context, providers.CreateServerResult)
+}
+
+func (e Executor) Create(ctx context.Context, op jobs.Operation, profile Profile) (jobs.Operation, error) {
+	if e.Gate == nil || e.Provider == nil {
+		return op, ErrMutationBlocked
+	}
+	if err := e.Gate.AllowMutation(); err != nil {
+		return op, fmt.Errorf("%w: %v", ErrMutationBlocked, err)
+	}
+	if e.EgressCheck != nil {
+		if err := e.EgressCheck(ctx); err != nil {
+			return op, err
+		}
+	}
+	reserved, fresh, err := e.Operations.Reserve(ctx, op)
+	if err != nil {
+		return op, err
+	}
+	if !fresh {
+		if reserved.State == jobs.OperationUnknown && reserved.ResourceID == "" {
+			return (Reconciler{Operations: e.Operations, Provider: e.Provider}).AdoptUnknownCreate(ctx, reserved, profile.IdentityTag, profile.Name, profile.Region)
+		}
+		return reserved, nil
+	}
+	reserved.State = jobs.OperationRunning
+	reserved.Attempt++
+	if err := e.Operations.Update(ctx, &reserved); err != nil {
+		return reserved, err
+	}
+	if e.PreCreateCheck != nil {
+		if err := e.PreCreateCheck(ctx); err != nil {
+			reserved.State = jobs.OperationFailed
+			return e.recordOperationError(ctx, reserved, stagePreCreate, err)
+		}
+	}
+	ssh := []string(nil)
+	if profile.SSHKeyID != "" {
+		ssh = []string{profile.SSHKeyID}
+	}
+	authorized := []string(nil)
+	if profile.SSHAuthorizedKey != "" {
+		authorized = []string{profile.SSHAuthorizedKey}
+	}
+	result, err := e.Provider.CreateServer(ctx, providers.CreateServerRequest{UpCloudTrialCompatible: profile.UpCloudTrialCompatible, Name: profile.Name, RegionID: profile.Region, PlanID: profile.Size, ImageID: profile.Image, SSHKeyRefs: ssh, SSHAuthorizedKeys: authorized, Tags: []string{"managed-by-digital-ocean-bot"}, Identity: profile.IdentityTag})
+	if err != nil {
+		if e.OnCreateError != nil {
+			e.OnCreateError(ctx, err)
+		}
+		class := providers.Class(err)
+		if class == providers.ErrorAuthentication || class == providers.ErrorPermissionDenied || class == providers.ErrorAccountLocked || class == providers.ErrorCapacity || class == providers.ErrorRegionCapacity || class == providers.ErrorImageUnavailable || class == providers.ErrorInvalidRequest || class == providers.ErrorNotFound || errors.Is(err, ErrMutationBlocked) {
+			reserved.State = jobs.OperationFailed
+		} else {
+			reserved.State = jobs.OperationUnknown
+		}
+		return e.recordOperationError(ctx, reserved, stageCreate, err)
+	}
+	if result.Outcome == providers.OutcomeRejected || result.ServerID == "" {
+		reserved.State = jobs.OperationFailed
+		return e.recordOperationError(ctx, reserved, stageCreateRejected, errors.New("provider rejected create without server id"))
+	}
+	if result.Outcome == providers.OutcomeAmbiguous {
+		reserved.State = jobs.OperationUnknown
+		return e.recordOperationError(ctx, reserved, stageCreateAmbiguous, ErrOutcomeStillUnknown)
+	}
+	if e.OnCreateSuccess != nil {
+		e.OnCreateSuccess(ctx, result)
+	}
+	reserved.ResourceID = result.ServerID
+	reserved.State = jobs.OperationVerifying
+	if err := e.Operations.Update(ctx, &reserved); err != nil {
+		return reserved, err
+	}
+	if e.EgressCheck != nil {
+		if err := e.EgressCheck(ctx); err != nil {
+			reserved.State = jobs.OperationUnknown
+			return e.recordOperationError(ctx, reserved, stageCreateEgress, err)
+		}
+	}
+	return reserved, nil
+}
+
+func (e Executor) Delete(ctx context.Context, op jobs.Operation, providerID string) (jobs.Operation, error) {
+	if e.Gate == nil || e.Provider == nil || e.Gate.AllowMutation() != nil {
+		return op, ErrMutationBlocked
+	}
+	reserved, fresh, err := e.Operations.Reserve(ctx, op)
+	if err != nil {
+		return op, err
+	}
+	// A reservation can survive a crash before it reaches running. Returning
+	// planned forever strands the lifecycle queue even after network recovery.
+	// Bind only a planned empty identity; unknown outcomes must retain theirs.
+	if providerID == "" || reserved.AccountID != op.AccountID || reserved.Kind != "DELETE_DROPLET" ||
+		reserved.IdempotencyKey != op.IdempotencyKey ||
+		(reserved.ResourceID != "" && reserved.ResourceID != providerID) {
+		return reserved, fmt.Errorf("%w: delete operation identity mismatch", jobs.ErrOperationConflict)
+	}
+	if reserved.State == jobs.OperationPlanned && reserved.Attempt != 0 {
+		return reserved, fmt.Errorf("%w: planned delete already has attempts", jobs.ErrOperationConflict)
+	}
+	if !fresh && reserved.State != jobs.OperationPlanned && reserved.State != jobs.OperationUnknown {
+		return reserved, nil
+	}
+	if !fresh && reserved.State == jobs.OperationUnknown && reserved.ResourceID == "" {
+		return reserved, fmt.Errorf("%w: unknown delete has no resource identity", jobs.ErrOperationConflict)
+	}
+	if fresh || reserved.ResourceID == "" {
+		reserved.ResourceID = providerID
+		if err := e.Operations.Update(ctx, &reserved); err != nil {
+			return reserved, err
+		}
+	}
+	// Update(running) below is the optimistic-lock claim. A concurrent loser
+	// must return before the provider call; running/verifying are never replayed.
+	if e.EgressCheck != nil {
+		if err := e.EgressCheck(ctx); err != nil {
+			reserved.State = jobs.OperationUnknown
+			return e.recordOperationError(ctx, reserved, stageDeletePreEgress, err)
+		}
+	}
+	reserved.State = jobs.OperationRunning
+	reserved.Attempt++
+	if err := e.Operations.Update(ctx, &reserved); err != nil {
+		return reserved, err
+	}
+	if err := e.Provider.DeleteServer(ctx, providerID); err != nil {
+		if providers.IsClass(err, providers.ErrorNotFound) {
+			reserved.State = jobs.OperationVerifying
+			return reserved, e.Operations.Update(ctx, &reserved)
+		}
+		reserved.State = jobs.OperationUnknown
+		return e.recordOperationError(ctx, reserved, stageDelete, err)
+	}
+	if e.EgressCheck != nil {
+		if err := e.EgressCheck(ctx); err != nil {
+			reserved.State = jobs.OperationUnknown
+			return e.recordOperationError(ctx, reserved, stageDeleteEgress, err)
+		}
+	}
+	reserved.State = jobs.OperationVerifying
+	return reserved, e.Operations.Update(ctx, &reserved)
+}

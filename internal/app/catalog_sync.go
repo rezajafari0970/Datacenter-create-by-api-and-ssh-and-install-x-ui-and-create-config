@@ -1,0 +1,83 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/providers"
+	"log"
+	"time"
+)
+
+func (c Container) SyncCatalogs(ctx context.Context) {
+	rows, err := c.DB.QueryContext(ctx, `SELECT id::text FROM accounts WHERE enabled=true AND deleted_at IS NULL`)
+	if err != nil {
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		// Catalog discovery is optional metadata work. Never hammer accounts that
+		// the provider state machine already classified as blocked/locked/error.
+		var providerState, providerError string
+		if err := c.DB.QueryRowContext(ctx, `SELECT provider_state,COALESCE(provider_error_state,'') FROM accounts WHERE id=$1`, id).Scan(&providerState, &providerError); err != nil || providerState != ProviderStateActive || providerError != "" {
+			continue
+		}
+		// A recent full provider snapshot already contains the catalog. Do not
+		// spend seven discovery requests again merely because the worker started.
+		var recent bool
+		_ = c.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_snapshots WHERE account_id=$1 AND created_at > now()-interval '23 hours')`, id).Scan(&recent)
+		enabled, _ := c.Economy.Enabled(ctx, id)
+		if recent && !enabled {
+			continue
+		}
+		rt, err := c.Runtime(ctx, id)
+		if err != nil {
+			log.Printf("catalog sync %s runtime: %v", id, err)
+			continue
+		}
+		cr, ok := rt.Driver.(providers.CatalogReader)
+		if !ok {
+			continue
+		}
+		var d providers.Catalog
+		if enabled {
+			d, err = c.CachedProviderCatalog(ctx, rt)
+		} else {
+			d, err = cr.Catalog(ctx)
+		}
+		if rt.Gateway != nil {
+			rt.Gateway.CloseIdleConnections()
+		}
+		if err != nil {
+			log.Printf("catalog sync %s discovery: %v", id, err)
+			continue
+		}
+		if enabled {
+			continue
+		} // cache carries its own actual fetch timestamp
+		b, _ := json.Marshal(d)
+		_, err = c.DB.ExecContext(ctx, `INSERT INTO provider_catalog_cache(account_id,catalog,refreshed_at) VALUES($1,$2,now()) ON CONFLICT(account_id) DO UPDATE SET catalog=EXCLUDED.catalog,refreshed_at=now()`, id, b)
+		if err != nil {
+			log.Printf("catalog sync %s save: %v", id, err)
+		}
+	}
+}
+func (c Container) RunDailyCatalogSync(ctx context.Context) {
+	c.SyncCatalogs(ctx)
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			c.SyncCatalogs(ctx)
+		}
+	}
+}

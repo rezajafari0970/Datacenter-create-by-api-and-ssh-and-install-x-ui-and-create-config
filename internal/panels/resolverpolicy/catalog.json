@@ -1,0 +1,28 @@
+{
+  "observed_at": "2026-10-05T10:50:15Z",
+  "source": "Control-server IPv4 UDP/TCP queries for googleads.g.doubleclick.net; each provider answered three bounded probes. Fleet evidence recorded separately.",
+  "active": [
+    "1.1.1.1",
+    "8.8.8.8"
+  ],
+  "note": "Cloudflare and Google only. Cached IPv4 built-in DNS and intercepted residential UDP/TCP client DNS use direct server egress, independent of residential upstream health. Direct identity routes are preserved.",
+  "resolvers": [
+    {
+      "address": "1.1.1.1",
+      "provider": "Cloudflare",
+      "profile": "unfiltered",
+      "family": 4,
+      "status": "answered",
+      "active": true
+    },
+    {
+      "address": "8.8.8.8",
+      "provider": "Google",
+      "profile": "unfiltered",
+      "family": 4,
+      "status": "answered",
+      "active": true
+    }
+  ],
+  "transport": "TCP"
+}

@@ -1,0 +1,155 @@
+package provisioning
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+type InstallerStateStore interface {
+	SetState(context.Context, string, string, string) error
+}
+type InstallerExecutor struct {
+	Store   Store
+	Events  EventRecorder
+	Scripts ScriptExecutor
+	States  InstallerStateStore
+}
+
+func (e InstallerExecutor) Execute(ctx context.Context, ir InstallerRun, resolved ResolvedInstaller, target Target, key []byte) error {
+	if err := e.States.SetState(ctx, ir.ID, "INSTALLING", ""); err != nil {
+		return err
+	}
+	verifying := false
+	for _, step := range resolved.Steps {
+		if !verifying && (step.Category == "verify" || step.Category == "health") {
+			if err := e.States.SetState(ctx, ir.ID, "VERIFYING", ""); err != nil {
+				return err
+			}
+			verifying = true
+		}
+		name := installerStepName(resolved.Manifest, ir.Generation, step.Name)
+		interrupted, ierr := e.Store.StepInterrupted(ctx, ir.ProvisionRunID, name)
+		if ierr != nil {
+			return ierr
+		}
+		if interrupted && step.Execute != "" && step.Precheck == "" {
+			err := ErrInterruptedUnsafe
+			_ = e.Store.FinishStep(ctx, ir.ProvisionRunID, name, err, true)
+			state := "FAILED"
+			if len(resolved.Rollback) > 0 {
+				state = "ROLLBACK_REQUIRED"
+			}
+			_ = e.States.SetState(ctx, ir.ID, state, err.Error())
+			return err
+		}
+		if cs, ok := e.Store.(StepCompletionStore); ok {
+			done, derr := cs.StepCompleted(ctx, ir.ProvisionRunID, name)
+			if derr != nil {
+				return derr
+			}
+			if done {
+				continue
+			}
+		}
+		attempt, err := e.Store.BeginStep(ctx, ir.ProvisionRunID, name, step.MaxAttempts)
+		if err != nil {
+			if errors.Is(err, ErrStepRetryDeferred) {
+				return err
+			}
+			state := "FAILED"
+			if len(resolved.Rollback) > 0 {
+				state = "ROLLBACK_REQUIRED"
+			}
+			_ = e.States.SetState(ctx, ir.ID, state, err.Error())
+			return err
+		}
+		var last CommandResult
+		err = e.Scripts.RunScript(ctx, target, key, step, func(p ScriptPhaseResult) {
+			last = p.Result
+			if e.Events != nil {
+				state := "PHASE_OK"
+				diag := Diagnostic{}
+				retryable := false
+				if p.Err != nil {
+					d := ClassifyCommandFailure(p.Err, p.Result)
+					if p.Phase == "precheck" && (d.Code == "SSH_COMMAND_FAILED" || d.Code == "SSH_COMMAND_EXIT") {
+						state = "PRECHECK_MISS"
+					} else {
+						state = "PHASE_FAILED"
+						diag = d
+						retryable = DiagnosticRetryable(diag)
+					}
+				}
+				_ = e.Events.Event(ctx, Event{RunID: ir.ProvisionRunID, Step: name, Substep: p.Phase, State: state, Attempt: attempt, Diagnostic: diag, Duration: p.Duration, Retryable: retryable, Metadata: map[string]any{"installer": resolved.Manifest.Name, "installer_version": resolved.Manifest.Version}})
+			}
+		}, nil)
+		if err != nil {
+			diag := ClassifyCommandFailure(err, last)
+			retryable := DiagnosticRetryable(diag)
+			var re *ReadinessError
+			if errors.As(err, &re) {
+				retryable = re.Retryable
+			}
+			if diag.Code == "COMMAND_OUTCOME_UNKNOWN" && step.Precheck == "" {
+				retryable = false
+			}
+			terminal := !retryable || (step.MaxAttempts > 0 && attempt >= step.MaxAttempts)
+			_ = e.Store.FinishStep(ctx, ir.ProvisionRunID, name, err, terminal)
+			state := "INSTALLING"
+			if terminal {
+				if len(resolved.Rollback) > 0 {
+					state = "ROLLBACK_REQUIRED"
+				} else {
+					state = "FAILED"
+				}
+			}
+			_ = e.States.SetState(ctx, ir.ID, state, err.Error())
+			return err
+		}
+		_ = e.Store.FinishStep(ctx, ir.ProvisionRunID, name, nil, false)
+	}
+	return e.States.SetState(ctx, ir.ID, "INSTALL_COMPLETE", "")
+}
+func (e InstallerExecutor) Rollback(ctx context.Context, ir InstallerRun, resolved ResolvedInstaller, target Target, key []byte) error {
+	if len(resolved.Rollback) == 0 {
+		return ErrInvalidPlan
+	}
+	for _, step := range resolved.Rollback {
+		name := installerStepName(resolved.Manifest, ir.Generation, "rollback-"+step.Name)
+		if cs, ok := e.Store.(StepCompletionStore); ok {
+			done, derr := cs.StepCompleted(ctx, ir.ProvisionRunID, name)
+			if derr != nil {
+				return derr
+			}
+			if done {
+				continue
+			}
+		}
+		attempt, err := e.Store.BeginStep(ctx, ir.ProvisionRunID, name, step.MaxAttempts)
+		if err != nil {
+			return err
+		}
+		var last CommandResult
+		err = e.Scripts.RunScript(ctx, target, key, step, func(p ScriptPhaseResult) { last = p.Result }, nil)
+		if err != nil {
+			diag := ClassifyCommandFailure(err, last)
+			retryable := DiagnosticRetryable(diag)
+			_ = e.Store.FinishStep(ctx, ir.ProvisionRunID, name, err, !retryable || (step.MaxAttempts > 0 && attempt >= step.MaxAttempts))
+			if retryable {
+				_ = e.States.SetState(ctx, ir.ID, "ROLLBACK_REQUIRED", "rollback: "+err.Error())
+			} else {
+				_ = e.States.SetState(ctx, ir.ID, "FAILED", "rollback: "+err.Error())
+			}
+			return err
+		}
+		_ = e.Store.FinishStep(ctx, ir.ProvisionRunID, name, nil, false)
+		if e.Events != nil {
+			_ = e.Events.Event(ctx, Event{RunID: ir.ProvisionRunID, Step: name, State: "ROLLBACK_OK", Attempt: attempt, Metadata: map[string]any{"installer": resolved.Manifest.Name}})
+		}
+	}
+	return e.States.SetState(ctx, ir.ID, "ROLLED_BACK", "")
+}
+func installerStepName(m InstallerManifest, generation int, step string) string {
+	return fmt.Sprintf("installer-g%d-%s-v%d-%s", generation, m.Name, m.Version, step)
+}

@@ -1,0 +1,176 @@
+package adminapi
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/app"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/network"
+	"github.com/rezajafari0970/Digital-ocean-bot/internal/providers"
+	"io"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+)
+
+type previewAccount struct {
+	Provider string `json:"provider"`
+	Token    string `json:"token"`
+	ProxyID  string `json:"proxy_id"`
+}
+type previewCredential struct{ token []byte }
+
+func (m previewCredential) Get(context.Context) ([]byte, error) {
+	return append([]byte(nil), m.token...), nil
+}
+
+func (s *Server) accountPreview(w http.ResponseWriter, r *http.Request) {
+	p, _ := principal(r.Context())
+	if !p.CanAdmin() {
+		writeJSON(w, 403, map[string]string{"error": "forbidden"})
+		return
+	}
+	var randomID [8]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		writeJSON(w, 500, errorBody())
+		return
+	}
+	previewID := hex.EncodeToString(randomID[:])
+	started := time.Now()
+	var x previewAccount
+	previewExitIP := ""
+	fail := func(err error, stage string) {
+		writeStagedProviderPreviewError(w, err, previewDiagnosticContext{Provider: x.Provider, Stage: stage, RequestID: previewID, Started: started, ExitIP: previewExitIP})
+	}
+	if json.NewDecoder(r.Body).Decode(&x) != nil || strings.TrimSpace(x.Token) == "" {
+		writeJSON(w, 400, map[string]string{"error": "token_required"})
+		return
+	}
+	if x.Provider == "" {
+		x.Provider = "digitalocean"
+	}
+	if s.Container.Providers == nil || !s.Container.Providers.Has(x.Provider) {
+		writeJSON(w, 400, map[string]string{"error": "provider_not_supported"})
+		return
+	}
+	var client *http.Client
+	var closeFn func()
+	if x.ProxyID != "" {
+		var px network.Proxy
+		var user, ref, adapter string
+		if err := s.DB.QueryRowContext(r.Context(), `SELECT id::text,name,type,host,port,COALESCE(username,''),COALESCE(secret_ref,''),status,COALESCE(adapter,'generic') FROM proxies WHERE id=$1`, x.ProxyID).Scan(&px.ID, &px.Name, &px.Type, &px.Host, &px.Port, &user, &ref, &px.Status, &adapter); err != nil || px.Status != network.StatusHealthy {
+			writeJSON(w, 409, map[string]string{"error": "proxy_not_healthy"})
+			return
+		}
+		pass := []byte(nil)
+		if ref != "" {
+			var err error
+			pass, err = s.Container.Secrets.GetProxy(r.Context(), px.ID, ref)
+			if err != nil {
+				writeJSON(w, 500, errorBody())
+				return
+			}
+			defer zeroBytes(pass)
+		}
+		cap := app.ProxyAdapterCapabilities(adapter)
+		if cap.StickySession {
+			user = app.ProxySessionUsername(adapter, user, "", "preview-vultr", false)
+		}
+		g, err := network.NewProxyGateway("preview", px, network.ProxyCredentials{Username: user, Password: string(pass)})
+		if err != nil {
+			writeJSON(w, 409, map[string]string{"error": "proxy_not_ready"})
+			return
+		}
+		client = g.Client
+		closeFn = g.CloseIdleConnections
+		probeCtx, probeCancel := context.WithTimeout(r.Context(), 6*time.Second)
+		probeReq, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, "https://api.ipify.org", nil)
+		if probeResp, probeErr := client.Do(probeReq); probeErr == nil && probeResp != nil {
+			b, _ := io.ReadAll(io.LimitReader(probeResp.Body, 128))
+			probeResp.Body.Close()
+			if probeResp.StatusCode >= 200 && probeResp.StatusCode < 300 {
+				previewExitIP = strings.TrimSpace(string(b))
+			}
+		}
+		probeCancel()
+	} else {
+		b, err := network.NewIsolatedDirectClient("preview")
+		if err != nil {
+			writeJSON(w, 500, errorBody())
+			return
+		}
+		client = b.Client
+		closeFn = b.CloseIdleConnections
+	}
+	defer closeFn()
+	driver, err := s.Container.Providers.Open(r.Context(), x.Provider, providers.OpenRequest{AccountID: "preview", HTTPClient: client, Credentials: previewCredential{[]byte(x.Token)}})
+	if err != nil {
+		writeJSON(w, 422, map[string]string{"error": "provider_validation_failed", "detail": err.Error()})
+		return
+	}
+	ar, aok := driver.(providers.AccountReader)
+	cr, cok := driver.(providers.CatalogReader)
+	if !aok || !cok {
+		writeJSON(w, 422, map[string]string{"error": "provider_capability_missing"})
+		return
+	}
+	account, err := ar.Account(r.Context())
+	if err != nil {
+		fail(err, "account")
+		return
+	}
+	capacity, capErr := ar.Capacity(r.Context())
+	if capErr != nil {
+		fail(capErr, "capacity")
+		return
+	}
+	catalog, err := cr.Catalog(r.Context())
+	if err != nil {
+		fail(err, "catalog")
+		return
+	}
+	regions := catalog.Regions
+	sort.SliceStable(regions, func(i, j int) bool { return regions[i].Name < regions[j].Name })
+	images := catalog.Images
+	sort.SliceStable(images, func(i, j int) bool {
+		ui := images[i].Family == "ubuntu"
+		uj := images[j].Family == "ubuntu"
+		if ui != uj {
+			return ui
+		}
+		return images[i].Version > images[j].Version
+	})
+	proxies := []map[string]any{{"id": "", "name": "No proxy — Direct server IP", "status": "direct"}}
+	rows, _ := s.DB.QueryContext(r.Context(), `SELECT id::text,name,status,COALESCE(country,'') FROM proxies WHERE status='healthy' ORDER BY name`)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, n, st, c string
+			if rows.Scan(&id, &n, &st, &c) == nil {
+				proxies = append(proxies, map[string]any{"id": id, "name": n, "status": st, "country": c})
+			}
+		}
+	}
+	meta, _ := s.Container.Providers.Metadata(driver.Name())
+	writeJSON(w, 200, map[string]any{"provider": driver.Name(), "policy": meta, "account": account, "server_limit": capacity.ComputeLimit, "provider_servers": capacity.ComputeInUse, "limit_known": capacity.LimitKnown, "capacity_source": capacity.Source, "regions": regions, "plans": catalog.Plans, "sizes": catalog.Plans, "images": images, "proxies": proxies, "defaults": map[string]any{"interval_seconds": 300, "batch_size": 1, "max_concurrent": 1}})
+}
+func writeProviderPreviewError(w http.ResponseWriter, err error, exitIP string) {
+	switch providers.Class(err) {
+	case providers.ErrorAuthentication:
+		detail := "Provider rejected these credentials."
+		if exitIP != "" {
+			detail += " Proxy exit IP: " + exitIP
+		}
+		writeJSON(w, 401, map[string]string{"error": "provider_credential_invalid", "detail": detail, "exit_ip": exitIP})
+	case providers.ErrorPermissionDenied, providers.ErrorAccountLocked:
+		writeJSON(w, 403, map[string]string{"error": "provider_permission_denied", "detail": err.Error()})
+	case providers.ErrorRateLimited:
+		writeJSON(w, 429, map[string]string{"error": "provider_rate_limited", "detail": "Provider rate limit reached. Try again later."})
+	case providers.ErrorTransport, providers.ErrorUnavailable:
+		writeJSON(w, 503, map[string]string{"error": "provider_transport_failed", "detail": "Could not reach provider through the selected connection."})
+	default:
+		writeJSON(w, 422, map[string]string{"error": "provider_validation_failed", "detail": err.Error()})
+	}
+}
