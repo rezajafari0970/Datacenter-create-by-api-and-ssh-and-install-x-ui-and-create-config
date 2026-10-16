@@ -1,0 +1,43 @@
+{
+  "version": "dob-fm-0.2.1",
+  "upstreams": {
+    "xray": {
+      "commit": "701af60772cda123492f86e383e1fdba066614a9",
+      "patch_sha256": "51f0907d071776dabab45bb708651828575a748c4897568e8afa85ab6e808497",
+      "source_archive_sha256": "9a7ac01ee75536d439789835871f1135e6f3f9f269165d875de918b32d68eebc",
+      "license_sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    },
+    "sanaei": {
+      "commit": "7ef22f94c950ff09f0870e2295fa65ad5968742c",
+      "patch_sha256": "8f6907a8cf7858e37c5992e1b9c41fe8458c0d1ead9f83f835edf30248e2a8b6",
+      "source_archive_sha256": "bd32eb9500e8d00f5037e87944e08baa4469d68aa7eaf0f5a0e9e6a152c61edd",
+      "license_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    "reality": {
+      "module": "github.com/xtls/reality",
+      "version": "v0.0.0-20260908062103-8cdf7bf9c7f0",
+      "patch_sha256": "1d496c6a43042ff3f464da7278ce134acd4901453ae530d859bf4c1b9e0b18b0",
+      "source_archive_sha256": "35efa8b6f7277a21dbcd398549b8156af50290aa9fa331eba2cfad1324ea6f77",
+      "license_sha256": "7c1bcfe5b0a8009ffae73984bad8e3b5f6bc562f67d6d67bafb600a3b8c08c5e"
+    }
+  },
+  "core": {
+    "name": "xray",
+    "sha256": "49928d026773e771b2a134cacc5527cb5f415cc0b7e0eca925c41e1d0a0b76ff",
+    "gzip_sha256": "246dbee0a14ec035b9dbe8657d8069d06b3a75a70af841a4f47c928841088393",
+    "gzip_file": "xray.gz"
+  },
+  "core_arm64": {
+    "name": "xray-arm64",
+    "sha256": "89403844f525ae6176007071ee0ccfd917e47554db1510029e22262117ea78d2",
+    "gzip_sha256": "9f169e7614d902652695bb363ff5d2ba11b6cb728c45dbc4a3fec1a146e431d6",
+    "gzip_file": "xray-arm64.gz"
+  },
+  "panel": {
+    "name": "x-ui",
+    "sha256": "bff9cbadb6838fe02ddb4ad83581e274e43ae7b4ca70189a705eceb802043e8e",
+    "gzip_sha256": "8d1f45b1d79f79c78038a53cf900282e562617a8ba656fa22dee666802ea460a",
+    "gzip_file": "x-ui.gz"
+  },
+  "toolchain": "go version go1.27.1 linux/amd64"
+}
