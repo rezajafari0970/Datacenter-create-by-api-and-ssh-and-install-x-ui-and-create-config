@@ -156,7 +156,7 @@
     "internal/adminapi/configs.go": "b66597d665d21f7c3777a5341eb0b3c6c78086fc29883de35a267b3a02f53684",
     "internal/adminapi/configs_global.go": "1b2895cd4600a915cab5e805821f41085d7589cbf3110b7e1c26007b03a759d7",
     "internal/adminapi/dashboard.go": "e2a6f6b7e2b5777f06a5333ced4e42e24783d9d52985b948430a0cc4e45a8ac6",
-    "internal/adminapi/desired_verification_postgres_test.go": "90b8be7a0a0e188a17fb78c20b649af4b2af1de325f40088395030edadff65b4",
+    "internal/adminapi/desired_verification_postgres_test.go": "4787e2df5297ec16f14012a6c31438040e0a1991c2a3d7f99d0df71582f4f559",
     "internal/adminapi/discovery.go": "3a4ed4740dde89d285a778c95b73fe7ba7932b0bca3585ca58ddcd1b615f644c",
     "internal/adminapi/dns_catalog.go": "9bfcc2622c3378f9b20eb3d35463b03f2081951a6225a4fa530d0a684df0c8e1",
     "internal/adminapi/fleet_retention_test.go": "c39f64135b5c6779b4d984b9d67a6dc9465706177f34133c6a5fb54210df92eb",
