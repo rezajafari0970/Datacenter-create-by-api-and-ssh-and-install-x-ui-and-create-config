@@ -1515,7 +1515,7 @@
     "release/check-source.py": "f8bda5b071e6551e659e91c145c576eb5c82f34fa5ac67a95ea7e996e95fc6a4",
     "web/static/app.css": "d0909e3dfbd83b947132a32620b4b927024b72072f2f3a67494dd231c25653da",
     "web/static/app.js": "4f76e3025296ae07b533c672389425d7ac575930e5ce3aaf99c10697c3205852",
-    "web/static/config-profiles.js": "4e51d82d5bdbec3cb8ddbd91105e8523e07640ff94bd7d012a64f026e50f07ff",
+    "web/static/config-profiles.js": "8de8c1276f1131e210c5f4d732a1620631e1ea5ea56b58cfda2dc45e00114e7e",
     "web/static/config-transport.js": "4c7dc8a688aa857b3b94af4777c78482031f8e7a2111470fec05057ce22b7ad0",
     "web/static/config-trojan.js": "f28f45a6ef41a936684b1ea4b4f4c2a190ddc66ffe58c16470f5b03151c72192",
     "web/static/index.html": "f735b51b660844ce6b9a369db49f81a809b80acc2cb9c40e88ee4036579ab091",
