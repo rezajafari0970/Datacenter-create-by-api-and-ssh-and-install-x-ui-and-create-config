@@ -1,0 +1,20 @@
+{
+  "version": "dob-fm-0.2.3",
+  "websocket_before": "Normal close and frame EOF loss reproduced deterministically; native VLESS WS TLS failed 3/10 before repair",
+  "websocket_focused_after": 30,
+  "final_native_roundtrips": {
+    "runs": 3,
+    "public_variants": 16,
+    "loopback_only_trojan_none": 1,
+    "passed": true
+  },
+  "final_tls_websocket_race": {
+    "runs": 3,
+    "passed": true
+  },
+  "logs_sha256": {
+    "ws-unit-before.log": "f234d8693bd55058784b1c5ae77da8f239f41f68b5b321c3ca466196348649b4",
+    "ws-tls-unit-final.log": "29c7ced7d9474b089add5bed8ef1ed0416bd522d0e0b8d4a4fb821032ef596b0",
+    "native-023-roundtrips.log": "8049d345bcfa766ddaccaf2abb1a208e41e57a18d5c3a736d92df8be8dbff412"
+  }
+}
