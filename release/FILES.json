@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "files": {
-    ".github/workflows/checks.yml": "2c31bd0058b9fbc9780e224acfc9b231aa597bb9b8d5823ff525cf6cd9b87a9a",
+    ".github/workflows/checks.yml": "c8ce6f899e9656e3f702edddbefb4385d6f71da67ee62d7e16405e1221caaa2b",
     ".gitignore": "a573f222eff20f4f600329911cbaf9fd2f74f46d0188ba97cfa38f23ebd524bb",
     "README.md": "8d1fee772a4a93f21d87a5a5418f4ace649ec01ba9f1378c103f95fe56ae8362",
     "cmd/admin-acceptance/main.go": "bbea34ef25022b712ddf9c28668b53eb4445f7b645cc61b9bfee6552c58a7196",
@@ -101,6 +101,7 @@
     "deploy/project-update.py": "98f5a502047e4567987e8ebf6e2b8078914f74c7f32ffbee8ace887299021dbe",
     "deploy/project_update_test.py": "ffb007e68fb4487b10596cbe82682b1d3260740fe5139d8bd251cb6ff95357cf",
     "deploy/recover.sh": "cfa08247c265d4b2a93ed9ce5daeff45f1fbc961f0b4263f1d60b6e37252d54a",
+    "deploy/release_smoke.py": "de14b8492b8e11cc177f19240d62bd451e0ac28b3cad21604ee5f5d2b95ba29c",
     "deploy/runtime-retention.py": "8bac7790a064cdb5f7b23460d9f54d49a28d4893849591132ee374ecfb15e22d",
     "deploy/service-topology.sh": "102c4c4ff7329bd8328d3c3e8b725af23150606ef9b3f32742792cbf5566d6aa",
     "deploy/static_permissions_test.py": "3c97d1d9f468b5991fa774c15582280cd60a7c5fcf3ab61960d5b6f8674043b3",
