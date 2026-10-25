@@ -175,7 +175,7 @@
     "internal/adminapi/client_mutations.go": "4a21ffc06276b2f4a83ec5803488cfcbce24650e8f876cb9012b68d47c2ecb40",
     "internal/adminapi/cloudflare.go": "66b62bc3a8d846f7a58ffe4149faf98beb4fa0b6bf4eaf1daf08c0b99720f040",
     "internal/adminapi/cloudflare_access_test.go": "bf02658f1eae40142b67e5572c4a78da3dc7b6bc44f9718a15f3fc50a62bc373",
-    "internal/adminapi/cloudflare_capacity_test.go": "f714199f405609104c3bde0faf1d0ea1476fef266859bdc8397516eac93243fe",
+    "internal/adminapi/cloudflare_capacity_test.go": "9c07ca9392c92efa24be8d60d51161bfb9f51408f6f9fde5011e51e1d380054e",
     "internal/adminapi/cloudflare_certificate_test.go": "a6b13966f7a81ce828d524f75220f595aa8e91e098ffafeb70263f36a91fc550",
     "internal/adminapi/cloudflare_lock_test.go": "27f85c1443ed87883492b39b80435997fdc01e5435bdc8aeb71f9e6b90c88827",
     "internal/adminapi/cloudflare_quota_test.go": "e2047bdbc3675ce5b82677a20e7999a23831c7cddd65b30da65c379897af8ac2",
