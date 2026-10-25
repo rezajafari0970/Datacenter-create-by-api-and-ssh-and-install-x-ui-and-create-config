@@ -191,7 +191,7 @@
     "internal/adminapi/config_drivers_test.go": "cf42e6893923250bf8b02fcc7af431a28727b6962d7067cacff75df8be3b7f33",
     "internal/adminapi/config_expr.go": "abe8895d50676405d1938547ac602e6c45a64f0c51702725e7ee98d10685ff00",
     "internal/adminapi/config_expr_test.go": "599a0c2d53ff91a4fa549b229f4a1f819cee149a830897dda2d32a47218658f0",
-    "internal/adminapi/config_immediate_delete_test.go": "6ae5d612472e5881045b74e1d5b87233ea2652aef1f2dbcab4dc03161570e551",
+    "internal/adminapi/config_immediate_delete_test.go": "fb7f49c0884045171e57fca8429de963202301f651aaf82fb60215c51c6c332b",
     "internal/adminapi/config_interval_test.go": "03ad62154b82ff33329138a31c7804fc2fe165e19e10a18929abaa45bbee948b",
     "internal/adminapi/config_lifecycle.go": "23a924fb79bd8b59f08bbbfa1e6d839628d884ea22463a319cc41c98b773bf69",
     "internal/adminapi/config_lifecycle_test.go": "9f793b3d005964a9f5fd94899b759d00d07e64fef8361c748eaa999fc8b716f6",
