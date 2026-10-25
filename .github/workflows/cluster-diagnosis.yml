@@ -1,0 +1,17 @@
+name: Isolated cluster diagnosis
+on:
+  push:
+    branches: [diagnose/owned-cluster-20261025]
+permissions:
+  contents: read
+jobs:
+  cluster:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create disposable checksummed cluster
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql
+          sudo pg_createcluster 16 dob0123456789abcdef --port 55432 --datadir /var/lib/postgresql/16/dob0123456789abcdef --start-conf=auto --start -o listen_addresses=127.0.0.1 -- --data-checksums --auth-local=peer --auth-host=scram-sha-256
