@@ -15,3 +15,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y postgresql
           sudo pg_createcluster 16 dob0123456789abcdef --port 55432 --datadir /var/lib/postgresql/16/dob0123456789abcdef --start-conf=auto --start -o listen_addresses=127.0.0.1 -- --data-checksums --auth-local=peer --auth-host=scram-sha-256
+      - name: Inspect disposable cluster failure
+        if: always()
+        run: |
+          sudo journalctl -u postgresql@16-dob0123456789abcdef --no-pager -n 70
+          sudo cat /var/log/postgresql/postgresql-16-dob0123456789abcdef.log
+          sudo pg_lsclusters
+          sudo ss -lntp
