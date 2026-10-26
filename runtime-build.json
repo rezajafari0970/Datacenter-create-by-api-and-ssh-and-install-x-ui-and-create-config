@@ -1,0 +1,45 @@
+{
+  "version": "dob-fm-0.2.4",
+  "source_commit": "4b2934b70e8802bfaa090c1c4276491d9842a2b1",
+  "upstreams": {
+    "xray": [
+      "https://codeload.github.com/XTLS/Xray-core/tar.gz/701af60772cda123492f86e383e1fdba066614a9",
+      "300e2b5450aef6b980b7fad6e5901ec567059c8ed5d7dd661ba152765eaee4a2"
+    ],
+    "reality": [
+      "https://proxy.golang.org/github.com/xtls/reality/@v/v0.0.0-20260908062103-8cdf7bf9c7f0.zip",
+      "388de1507e023377a12b928d066692eeaa30bbe5d13ccf321a8fe9c2f4d0be5a"
+    ]
+  },
+  "patch_sha256": {
+    "xray": "12a9f63e6af248f9dede1bb551b3f5730f2c83b48e2566580517c10908cb41f1",
+    "reality": "bb774863700f2a4b2111508ed6fe40761b2dd8eeda9af3933908da2c33d9b662"
+  },
+  "assets": {
+    "xray": {
+      "sha256": "587bc0fdd3fe0ce20209d30296c4e61cad06ebcc01ff2d8f837a5f52e9615c2f",
+      "gzip_sha256": "10d273cece1a83691a2736470a381648b11a6e17c971f8b917bacc0f07983e7b",
+      "size": 35512444,
+      "gzip_size": 13210446
+    },
+    "xray-arm64": {
+      "sha256": "72e0b7a950ee3f341e2d184900c471d88f47e8ff01d0018dd3320d97362978d5",
+      "gzip_sha256": "081749934ac84606456eefafac126351985c22bda94d0936848c1ff3a83413ee",
+      "size": 33095804,
+      "gzip_size": 11898379
+    }
+  },
+  "capabilities": {
+    "schema": 1,
+    "fragmented_http_sniffing": true,
+    "fragmented_http_header": true,
+    "fragmented_trojan_auth": true,
+    "websocket_graceful_close": true,
+    "tls_certificate_snapshot": true,
+    "reality_fallback_bounded": true,
+    "reality_handshake_deadline": true,
+    "reality_fallback_max_connections": 512,
+    "reality_finalmask_fragment": true,
+    "xhttp_vision_encryption": true
+  }
+}
