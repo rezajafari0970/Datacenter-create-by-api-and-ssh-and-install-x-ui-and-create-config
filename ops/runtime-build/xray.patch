@@ -432,7 +432,7 @@ index 0000000..75a569f
 +	for _, tc := range []struct{ host, want string }{
 +		{"127.0.0.1:8080", "127.0.0.1"},
 +		{"Example.COM:443", "example.com"},
-+		{"[2001:db8::1]:8080", "2001:db8::1"},
++		{"[2001:db8::1]:8080", "[2001:db8::1]"},
 +	} {
 +		request := "GET /probe HTTP/1.1\r\nX-Test: complete\r\nHost: " + tc.host + "\r\n"
 +		for split := 1; split < len(request); split++ {
@@ -820,7 +820,7 @@ index 3c1ff06..af05449 100644
 +		}
 +		// Retain only the possible delimiter prefix between reads. Do not
 +		// parse an incomplete request line or response as an HTTP request.
-+		const keep = len(ENDING) - 1
++		const keep = int32(len(ENDING) - 1)
 +		if buffer.Len() > keep {
 +			headerBuf.Write(buffer.BytesRange(0, buffer.Len()-keep))
 +			var tail [keep]byte
