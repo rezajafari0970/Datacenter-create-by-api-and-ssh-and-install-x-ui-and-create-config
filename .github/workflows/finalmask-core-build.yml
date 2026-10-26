@@ -1,0 +1,29 @@
+name: FinalMask core build and regression
+on:
+  push:
+    branches: ['runtime/finalmask-20261026']
+    paths: ['ops/runtime-build/**', '.github/workflows/finalmask-core-build.yml']
+permissions:
+  contents: write
+concurrency:
+  group: finalmask-core-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Build and test immutable core sources
+        run: python3 ops/runtime-build/build.py
+      - name: Publish verified artifacts to this isolated branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add xray.gz xray-arm64.gz runtime-build.json
+          git commit -m 'build: verified dob-fm-0.2.4 core artifacts'
+          git push origin HEAD:runtime/finalmask-20261026
