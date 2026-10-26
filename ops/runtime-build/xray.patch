@@ -859,3 +859,35 @@ index 3c1ff06..af05449 100644
  		return nil, ErrHeaderMisMatch
  	}
  
+diff --git a/transport/internet/headers/http/http_test.go b/transport/internet/headers/http/http_test.go
+index 8591a19..a0e919d 100644
+--- a/transport/internet/headers/http/http_test.go
++++ b/transport/internet/headers/http/http_test.go
+@@ -4,7 +4,6 @@ import (
+ 	"bufio"
+ 	"bytes"
+ 	"context"
+-	"crypto/rand"
+ 	"strings"
+ 	"testing"
+ 	"time"
+@@ -59,16 +58,15 @@ func TestRequestHeader(t *testing.T) {
+ }
+ 
+ func TestLongRequestHeader(t *testing.T) {
+-	payload := make([]byte, buf.Size+2)
+-	common.Must2(rand.Read(payload[:buf.Size-2]))
++	payload := bytes.Repeat([]byte{'a'}, buf.Size+2)
+ 	copy(payload[buf.Size-2:], ENDING)
+ 	payload = append(payload, []byte("abcd")...)
+ 
+ 	reader := HeaderReader{}
+ 	_, err := reader.Read(bytes.NewReader(payload))
+ 
+-	if err != nil && !(strings.HasPrefix(err.Error(), "invalid") || strings.HasPrefix(err.Error(), "malformed")) {
+-		t.Error("unknown error ", err)
++	if err != ErrHeaderToLong {
++		t.Error("oversized header was not bounded", err)
+ 	}
+ }
+ 
