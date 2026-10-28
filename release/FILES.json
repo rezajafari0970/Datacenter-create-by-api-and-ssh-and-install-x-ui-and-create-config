@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "files": {
-    ".github/workflows/checks.yml": "463b75a5f08bf63e86cab671d77b1b8bef69f8f7dd8d84c636a9640e60b7aedf",
+    ".github/workflows/checks.yml": "56a6094ee503baf22a841e071e03ac70b12d1815370cfa182ad20c717ad34749",
     ".gitignore": "a573f222eff20f4f600329911cbaf9fd2f74f46d0188ba97cfa38f23ebd524bb",
     "README.md": "f4f0d9eaa034b86f241d8bd120edf0c092358572feecfdd8051a34e7f73c9a4f",
     "cmd/admin-acceptance/main.go": "bbea34ef25022b712ddf9c28668b53eb4445f7b645cc61b9bfee6552c58a7196",
@@ -1787,7 +1787,7 @@
     "migrations/000203_account_settings_revision.up.sql": "015f802b506d80a16f2264f34162323882f3c195da787f0969a02f287143d33e",
     "migrations/000204_account_proxy_country_policy.down.sql": "e4006dcc37720bd53dc9ddbb839c7aeed7c371b8763d16ab169bba06450d7c33",
     "migrations/000204_account_proxy_country_policy.up.sql": "bef94fd4ee4286cda5266c45f614cad77cbdabe12f6a7756b7e5668390d24397",
-    "release/VALIDATION.json": "781177b83366adb98ec1564c081c1854489cd04898f9545444e0383b954b756b",
+    "release/VALIDATION.json": "75712844f4a841e157cf89711bd143c376a1f74fd094394687be4679196fd7b9",
     "release/check-source.py": "f8bda5b071e6551e659e91c145c576eb5c82f34fa5ac67a95ea7e996e95fc6a4",
     "tools/cloudflare/operator-probe.py": "25c2bef73c615f5fe456b6280d6e8aa158c03ae660e55930bede5cb7c70bc0df",
     "web/static/account-catalog.js": "61d639d394f732926a3a75fb534db38da43c3b7aba28af624a6306dd3f139149",
