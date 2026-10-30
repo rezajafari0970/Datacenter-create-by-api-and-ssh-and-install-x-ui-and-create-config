@@ -107,7 +107,7 @@
     "deploy/project_update_test.py": "ffb007e68fb4487b10596cbe82682b1d3260740fe5139d8bd251cb6ff95357cf",
     "deploy/provider-browser-runtime.py": "25060460e3c43ca38036c01a6a8cb3abd594254754872e0df4c5facbae7fdb0c",
     "deploy/recover.sh": "cfa08247c265d4b2a93ed9ce5daeff45f1fbc961f0b4263f1d60b6e37252d54a",
-    "deploy/release_smoke.py": "de786938225f4c20cacbf5c68d89247aaf94d552755e656f8ee6d8d15d65d4ee",
+    "deploy/release_smoke.py": "5ba7c42864a4424169b75de48ee754875f93cbf4e89dfa01818d970c813f35f8",
     "deploy/runtime-retention.py": "8bac7790a064cdb5f7b23460d9f54d49a28d4893849591132ee374ecfb15e22d",
     "deploy/service-topology.sh": "dc330d0d1daf07cedd12cc29ae55ff48a13d47b3cd9238527c4368cf2257844b",
     "deploy/static_permissions_test.py": "fbb89a4f66d5d027fcd7691b1d48d3ab425ec583e710f2ff6d5c3207a4f45ff3",
