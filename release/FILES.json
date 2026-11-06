@@ -86,7 +86,7 @@
     "deploy/datacenter-bot-update.socket": "bf53dd498f8d1c4146a5028b5769da6f3051fad53065cd47493c42057cc8dc7b",
     "deploy/datacenter-bot-update@.service": "080a721ab53a58031369c985e9b1a8e334f91151413b179a752e1f300c72fb33",
     "deploy/datacenter-provider-browser.socket": "73bdff59aa51747686ce78a28d8e9022f74b029fd2ed527349911f64caa12891",
-    "deploy/datacenter-provider-browser@.service": "dc45e6bafdcdd6b055aa06328f113b4650a5ffac4df8861940ab5a784102c088",
+    "deploy/datacenter-provider-browser@.service": "af91e29720477c4807fee7d4b6c962962a349955c3cf781e75235b833d73bc85",
     "deploy/digital-ocean-bot-api.service": "a71eb8acbc285d8e2e1c19a05817f2052f6db181e8946d25a9171d0eb3e17ee9",
     "deploy/digital-ocean-bot-vultr-browser-manager.service": "050f039f946a74dd45abe076583b987714bd68524af68bee0f9d64c962c1ff97",
     "deploy/digital-ocean-bot-worker-panels.service": "8433201931e48124bc199cbb348066d1a600d349a8a837c9ada0c579d73b00a5",
