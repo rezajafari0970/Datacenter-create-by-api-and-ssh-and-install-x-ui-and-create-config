@@ -1105,7 +1105,7 @@
     "internal/providers/ovh/client.go": "758f6b05c86e50e7e8f24699d476d78cdf4650244bbb09f78c837535a8c53b29",
     "internal/providers/ovh/diagnostics.go": "7cff3db2f2cb2fd763241f91c9778c7468aad3e6337045fd9036072d9b80c7bd",
     "internal/providers/ovh/diagnostics_test.go": "f3dc5b88d1a83d09d18a3a50f40c78e6ca11b7b3ff6a4388506cd21fc2a44397",
-    "internal/providers/ovh/driver.go": "4537c3ab429a1f0f16f9d6764c5e28bf0edfac417501d40ed3521079d22b7472",
+    "internal/providers/ovh/driver.go": "4c0893108b7c49185a9266978be557025182dbed46b9aaf82e894164310714d1",
     "internal/providers/ovh/driver_test.go": "afc1ed5c47d6bba627a9c22307855261da3fe70a5b45f6dc0798840b53d69e93",
     "internal/providers/ovh/flavor_policy.go": "cf669c6eb167efa827a045cf61a528c612ed64560565142209fdccfad1415ab0",
     "internal/providers/ovh/native_envelope_test.go": "5048a09b7252780bd77021a8b5c0513069c627e23be89e97dc23478cae401b00",
